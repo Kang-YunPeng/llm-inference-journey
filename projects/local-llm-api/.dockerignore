@@ -1,0 +1,57 @@
+# 版本控制
+.git
+.gitignore
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境（非常重要！）
+.venv/
+venv/
+ENV/
+
+# 日志与临时文件
+*.log
+*.tmp
+logs/
+
+# 本地配置
+.env
+.env.local
+
+# 测试
+tests/
+.coverage
+.pytest_cache/
+
+# 脚本（通常不需要进镜像）
+scripts/
+
+# 仅保留必要内容
+!requirements.txt
+!src/

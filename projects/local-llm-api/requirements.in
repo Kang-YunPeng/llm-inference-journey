@@ -1,0 +1,10 @@
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
+transformers==4.46.0
+accelerate==1.2.0
+bitsandbytes==0.45.0
+safetensors==0.4.5
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.10.3
