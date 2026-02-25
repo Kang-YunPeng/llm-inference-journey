@@ -143,6 +143,12 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"    使用设备: {device}")
     model = model.to(device)
+    base_model = model
+    if hasattr(torch, 'compile'):
+        model = torch.compile(model)
+        print("    已启用 torch.compile 加速")
+    else:
+        print("    警告: torch.compile 未启用，训练速度可能较慢")
 
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
@@ -201,8 +207,8 @@ if __name__ == '__main__':
     final_accuracy = test_accuracies[-1]
     print(f"    最终测试准确率: {final_accuracy:.2f}%")
 
-    model_path = 'mlp_model.safetensors'
-    save_file(model.state_dict(), model_path)
+    model_path = './day01/mlp_model.safetensors'
+    save_file(base_model.state_dict(), model_path)
     print(f"    模型已保存至: {model_path}")
 
     loaded_model = MLP()
