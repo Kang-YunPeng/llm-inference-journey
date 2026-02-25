@@ -33,7 +33,7 @@ def evaluate(model, data_loader, device):
     correct = 0
     total = 0
     
-    with torch.no_grad():
+    with torch.inference_mode():
         for images, labels in data_loader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
@@ -53,6 +53,7 @@ if __name__ == '__main__':
     print("【第一部分】张量与自动微分验证")
     print("=" * 60)
 
+    # 不推荐 x = torch.Tensor([1, 2, 3])  默认float32（可能非预期）
     x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
     y = x ** 2 + 2 * x + 1
     y_sum = y.sum()

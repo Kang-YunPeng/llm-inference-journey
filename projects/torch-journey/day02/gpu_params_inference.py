@@ -122,7 +122,7 @@ def batch_inference(model, data_loader, device):
     all_labels = []
     all_probs = []
     
-    with torch.no_grad():  # 不计算梯度
+    with torch.inference_mode():  # 不计算梯度
         for images, labels in data_loader:
             images = images.to(device)
             labels = labels.to(device)
@@ -169,7 +169,7 @@ model_cpu.eval()
 model_cpu = model_cpu.to('cpu')
 
 cpu_times = []
-with torch.no_grad():
+with torch.inference_mode():
     for _ in range(num_runs):
         start = time.time()
         _ = model_cpu(test_images)
@@ -191,11 +191,11 @@ if torch.cuda.is_available():
     test_images_gpu = test_images.to('cuda')
     
     # 预热
-    with torch.no_grad():
+    with torch.inference_mode():
         _ = model_gpu(test_images_gpu)
     
     gpu_times = []
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(num_runs):
             start = time.time()
             _ = model_gpu(test_images_gpu)
