@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.functional import log_softmax
 import math
 import copy
@@ -60,7 +61,7 @@ class Encoder(nn.Module):
     def __init__(self, layer, N):
         super().__init__()
         self.layers = clones(layer, N)
-        self.norm = LayerNorm(layer.size)
+        self.norm = RMSNorm(layer.size)
 
     def forward(self, x, mask):
         for layer in self.layers:
@@ -79,21 +80,32 @@ class LayerNorm(nn.Module):
         std = x.std(-1, keepdim=True)
         return self.a_2 * (x - mean) / (std + self.eps) + self.b_2  #使用了广播机制
 
-class SublayerConnection(nn.Module):
-    def __init__(self, size, dropout):
+# 现在大模型使用RMSNorm，实现了推理速度的进一步提升
+class RMSNorm(nn.Module):
+    def __init__(self, features, eps=1e-6):
         super().__init__()
-        self.norm = LayerNorm(size)
-        self.dropout = nn.Dropout(dropout)
+        self.weight = nn.Parameter(torch.ones(features))
+        self.eps = eps
+
+    def forward(self, x):
+        variance = x.pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.eps)
+        return self.weight * x
+
+class SublayerConnection(nn.Module):
+    def __init__(self, size):
+        super().__init__()
+        self.norm = RMSNorm(size)
 
     def forward(self, x, sublayer):
-        return x + self.dropout(sublayer(self.norm(x)))
+        return x + sublayer(self.norm(x))
 
 class EncoderLayer(nn.Module):
-    def __init__(self, size, self_attn, feed_forward, dropout):
+    def __init__(self, size, self_attn, feed_forward):
         super().__init__()
         self.self_attn = self_attn
         self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 2)
+        self.sublayer = clones(SublayerConnection(size), 2)
         self.size = size
 
     def forward(self, x, mask):
@@ -104,7 +116,7 @@ class Decoder(nn.Module):
     def __init__(self, layer, N):
         super().__init__()
         self.layers = clones(layer, N)
-        self.norm = LayerNorm(layer.size)
+        self.norm = RMSNorm(layer.size)
 
     def forward(self, x, memory, src_mask, tgt_mask):
         for layer in self.layers:
@@ -112,13 +124,13 @@ class Decoder(nn.Module):
         return self.norm(x)
 
 class DecoderLayer(nn.Module):
-    def __init__(self, size, self_attn, src_attn, feed_forward, dropout):
+    def __init__(self, size, self_attn, src_attn, feed_forward):
         super().__init__()
         self.size = size
         self.self_attn = self_attn
         self.src_attn = src_attn
         self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 3)
+        self.sublayer = clones(SublayerConnection(size), 3)
 
     def forward(self, x, memory, src_mask, tgt_mask):
         m = memory
@@ -129,6 +141,7 @@ class DecoderLayer(nn.Module):
         return self.sublayer[2](x, self.feed_forward)
     
 # 生成后续位置掩码, 形状为 (1, size, size)的下三角矩阵, 用于注意力计算
+# vllm和FlashAttention通过算法逻辑隐式处理Casual Mask, 将显存从O(size^2)降为O(size)
 def subsequent_mask(size):
     attn_shape = (1, size, size)
     subsequent_mask = torch.triu(torch.ones(attn_shape), diagonal=1).type(
@@ -136,14 +149,13 @@ def subsequent_mask(size):
     )
     return subsequent_mask == 0
 
-def attention(query, key, value, mask=None, dropout=None):
+# 现代大模型使用FlashAttention而不是标准的注意力机制
+def attention(query, key, value, mask=None):
     d_k = query.size(-1)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
         scores.masked_fill_(mask == 0, -1e9)
     p_attn = scores.softmax(dim=-1)
-    if dropout is not None:
-        p_attn = dropout(p_attn)
     return torch.matmul(p_attn, value), p_attn
 
 
@@ -156,7 +168,6 @@ class MultiHeadedAttention(nn.Module):
         self.h = h
         self.linears = clones(nn.Linear(d_model, d_model), 4)
         self.attn = None
-        self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, query, key, value, mask=None):
         if mask is not None:
@@ -172,7 +183,7 @@ class MultiHeadedAttention(nn.Module):
 
         # 2) Apply attention on all the projected vectors in batch.
         x, self.attn = attention(
-            query, key, value, mask=mask, dropout=self.dropout
+            query, key, value, mask=mask
         )
 
         # 3) "Concat" using a view and apply a final linear.
@@ -187,15 +198,15 @@ class MultiHeadedAttention(nn.Module):
         return self.linears[-1](x)
 
 class PositionwiseFeedForward(nn.Module):
-    def __init__(self, d_model, d_ff, dropout=0.1):
+    def __init__(self, d_model, d_ff):
         super().__init__()
-        self.w_1 = nn.Linear(d_model, d_ff)
-        self.w_2 = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.gate_proj = nn.Linear(d_model, d_ff)
+        self.up_proj = nn.Linear(d_model, d_ff)
+        self.down_proj = nn.Linear(d_ff, d_model)
 
     def forward(self, x):
-        return self.w_2(self.dropout(self.w_1(x).relu()))
-    
+        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab):
         super().__init__()
@@ -205,6 +216,7 @@ class Embeddings(nn.Module):
     def forward(self, x):
         return self.lut(x) * math.sqrt(self.d_model) # 扩大词向量, 防止被位置编码淹没
 
+# 正余弦绝对位置编码，现代大模型使用RoPE
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout, max_len=5000):
         super().__init__()
@@ -230,11 +242,11 @@ def make_model(
 ):
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_model)
-    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+    ff = PositionwiseFeedForward(d_model, d_ff)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
-        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
-        Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
+        Encoder(EncoderLayer(d_model, c(attn), c(ff)), N),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff)), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
         Generator(d_model, tgt_vocab),
@@ -264,7 +276,3 @@ def inference_test():
         ys = torch.cat(
             [ys, torch.empty(1, 1).type_as(src.data).fill_(next_word)], dim=1
         )
-
-
-
-

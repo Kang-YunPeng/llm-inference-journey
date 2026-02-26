@@ -37,7 +37,7 @@ def evaluate(model, data_loader, device):
         for images, labels in data_loader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
+            _, predicted = torch.max(outputs.data, 1)  # 返回 (最大值, 最大值索引)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     
