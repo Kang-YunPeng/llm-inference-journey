@@ -25,7 +25,4 @@ test_vllm.py
 
 ## 核心结论
 1. Prefill 阶段耗时与 prompt 长度强相关（O(L²) attention）
-2. Decoding 阶段速度受 KV Cache 访问模式影响（长上下文更高效）
-
-## 备注
-- 使用 enforce_eager=True 避免 CUDA Graph OOM
+2. Decoding 阶段速度受 KV Cache 访问模式影响（Decoding 阶段性能强依赖 KV Cache 的读写方式（PagedAttention、块布局、带宽、是否合并访存等））
